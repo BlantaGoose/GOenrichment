@@ -1,0 +1,26 @@
+{
+    "id": "A4CB9FDE",
+    "path": "~/research/enrichment/topGO/topGOfor7.R",
+    "project_path": "topGOfor7.R",
+    "type": "r_source",
+    "hash": "1641488485",
+    "contents": "",
+    "dirty": false,
+    "created": 1649922259357.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "196,36",
+        "scrollLine": "176"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1650350101,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1650350101570,
+    "read_only": false,
+    "read_only_alternatives": []
+}

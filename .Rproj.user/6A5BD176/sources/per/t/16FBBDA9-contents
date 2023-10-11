@@ -1,0 +1,121 @@
+##https://bioconductor.org/packages/release/bioc/vignettes/topGO/inst/doc/topGO.pdf
+BiocManager::install("topGO")
+BiocManager::install("ALL")
+BiocManager::install("hgu95av2.db")
+BiocManager::install("Rgraphviz")
+
+##3.1 Data preparation
+##geneList...a list of gene p-values & 323 genes
+library(topGO)
+library(ALL)
+data(ALL)
+data(geneList)
+
+##GO terms and association gene-to-GO
+##hgu95av2... microarray
+affyLib <- paste(annotation(ALL), "db", sep = ".")
+library(package = affyLib, character.only = TRUE)
+
+##geneListをインストールした時、topDiffGenesという特異発現遺伝子のリスト洗濯に使われる物もインストールされる
+##assumes provided argument is a named vector of p-values.
+##323gene中50geneが0.01より低いp値を持っていた
+sum(topDiffGenes(geneList))
+
+##topGO.pdf p4、Section4.2
+##nodeSize=10...遺伝子にアノテーションされた数が10回未満のGOtermから、GO hierarchyを排除
+##annFUN.db...affyLib objectからgene-to-GO mappingを排除
+##new関数は第一引数に与えたクラスで新しいオブジェクトを作る。
+sampleGOdata <- new("topGOdata",
+                    description = "Simple session", 
+                    ontology = "BP",
+                    allGenes = geneList, 
+                    geneSel = topDiffGenes, 
+                    nodeSize = 10,
+                    annot = annFUN.db, 
+                    affyLib = affyLib)
+##To look summary of the result, only type the name.
+sampleGOdata
+
+
+##3.2 Performing the enrichment tests
+##Fisher's exact test & Kolmogorov-Smirnov like test
+##runTest...データに検定を行う。クラス指定、GO graph構造の処理方法、検定方法
+##試しに、a classical enrichment analysisを行う。これは特異的発現したグループ内で、GOtermが偏っていないか調べる
+resultFisher <- runTest(sampleGOdata, algorithm = "classic", statistic = "fisher")
+
+##帰ってくるのはtopGOresult型のオブジェクト。short summaryを見てみよう
+resultFisher
+
+#Kolmogorov-Smirnovでもやってみよう。classicとelimで
+resultKS <- runTest(sampleGOdata, algorithm = "classic", statistic = "ks")
+resultKS.elim <- runTest(sampleGOdata, algorithm = "elim", statistic = "ks")
+
+##3.3 Analysis of results
+##GenTable ... トップ１０のGOtermsとp値の解析
+##elimで解析した際のtop10GOtermsを調べる。また、GOtermsの順位とp値を、classicで得たものと比較する。
+
+allRes <- GenTable(sampleGOdata,
+                   classicFisher = resultFisher,
+                   classicKS = resultKS, 
+                   elimKS = resultKS.elim,
+                   orderBy = "elimKS",
+                   ranksOf = "classicFisher",
+                   topNodes = 10)
+##elimによって獲得された10のtopGOが返される。統計量とtopGOresultsのp値
+##Table2が得られるはず
+head(allRes)
+
+##topGOresultオブジェクトにあるそれぞれのGOtermsのp値を確認しよう→score()
+##Kolmogorov-Smirnov testにおける、classicとelimの違い。
+##elimはclassicよりも保存的？であるので、p値がより低いという仮定が提案できる。
+pValue.classic <- score(resultKS)
+pValue.elim <- score(resultKS.elim)[names(pValue.classic)]
+gstat <- termStat(sampleGOdata, names(pValue.classic))
+gSize <- gstat$Annotated / max(gstat$Annotated) * 4
+
+##colMapを定義する。cf)https://rpubs.com/aemoore62/TopGo_colMap_Func_Troubleshoot
+colMap <- function(x) {
+  .col <- rep(rev(heat.colors(length(unique(x)))), time = table(x))
+  return(.col[match(1:length(x), order(x))])
+}
+
+gCol <- colMap(gstat$Significant)
+plot(pValue.classic,
+     pValue.elim,
+     xlab = "p-value classic",
+     ylab = "p-value elim",
+     pch = 19,
+     cex = gSize,
+     col = gCol)
+##いくつかのGOtermsはclassicの方がelimよりも大きなp値を持っているが、elimのp値がclassicよりも大きいGOtermもある。
+##図の見方。プロットの大きさは各GOtermの中でアノテーションされた遺伝子の数。
+##プロットの色：赤いほどより多くの特異発現遺伝子数
+sel.go <- names(pValue.classic)[pValue.elim < pValue.classic]
+cbind(termStat(sampleGOdata, sel.go),
+      elim = pValue.elim[sel.go],
+      classic = pValue.classic[sel.go])
+##これを見ると、多くの遺伝子がアノテーションされている一方で、p値が大きい。このため、top10にはなかった。
+
+##GOgraph上で、GOtermがどのように分布しているのか調べるやり方もある。significantなやつは長方形になっている。
+showSigOfNodes(sampleGOdata,
+               score(resultKS.elim),
+               firstSigNodes = 5,
+               useInfo = 'all')
+##図の見方...それぞれのGOのなかに、p値、特に有為な遺伝子数とGOtermにアノテーションされた遺伝子数
+
+library(tidyverse)
+library(org.Hs.eg.db)
+entrez_ids = mappedkeys(org.Hs.egGO)
+scores = runif(length(entrez_ids), 0, 1)  # p-value-like
+# scores = rnorm(length(entrez_ids), 0, 0.4)  # log2FC-like
+named_scores = setNames(scores, entrez_ids)
+
+tg_data = new("topGOdata",
+              ontology="BP",
+              allGenes=named_scores,
+              geneSelectionFun=function(x) {x < 0.01},
+              # geneSelectionFun=function(x) {abs(x) > 1},
+              nodeSize=10,
+              annotationFun=annFUN.org,
+              mapping="org.Hs.eg.db",
+              ID="entrez")

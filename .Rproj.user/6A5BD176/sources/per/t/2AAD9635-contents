@@ -1,0 +1,213 @@
+##In this script, we annotate interested OGs with GO terms and extract OGs and p-values from CAFE output
+##Step.1 Annotate OGs with GO term
+library(biomaRt)
+library(tidyverse)
+library(stringr)
+library(topGO)
+
+##全種と興味ある種とでOGs-GOtermを作成する。
+##0.それぞれのOGsにどんなgeneが含まれているかのデータを用意。
+orthogroups <- read_tsv("input/crows/Orthogroups.tsv")
+
+
+##1.興味あるinputデータの読み込みと整形→getBMのValuesに入れるやつの作成。
+Kyoumi1 <- read_tsv("input/otamesi/CorvusGF.txt", col_names = "Orthogroup") %>%
+  separate(Orthogroup, into=c("number", "Orthogroup")) %>% 
+  dplyr::select(Orthogroup) %>%
+  filter(Orthogroup != "object")
+
+##加工によってすべてのOGsを取り出す。
+##famsファイルに、terminalのviコマンドで一行目を削除したりしておこう。
+All1 <- read_csv("input/otamesi/0324summary_fams.csv", col_names = FALSE) %>%
+  filter(str_detect(X2, "^OG") & !str_detect(X2, ".\\[")) %>%
+  separate(X1, into = c(NA,"X1"), sep = ":") %>%
+  t() %>%
+  as.data.frame() %>%
+  rename(Orthogroup = V1)
+  
+##Kyoumi1にあるOGを、注目しているCorvus属とリファレンスのTaeniopygia、Ficedula、Parus属に限定する。
+##Kyoumi3はカラスノードに特異的なOrthoGroupsとタンパク質ID
+Kyoumi2 <- Kyoumi1 %>% 
+  left_join(orthogroups, 
+            by = "Orthogroup")
+Kyoumi3 <- Kyoumi2 %>% 
+  pivot_longer(2:ncol(Kyoumi2), 
+               names_to = "species", 
+               values_to = "refseq")
+outgroup_1 <- Kyoumi3 %>%
+  filter(species %in% c("Ficedula_albicollis_lsi",
+                        "Taeniopygia_guttata_lsi",
+                        "Parus_major_lsi")) %>%
+  na.omit()
+
+##kakuninn
+outgroup_1 %>% filter(species == "Ficedula_albicollis_lsi") %>%
+  nrow()
+outgroup_1 %>% filter(species == "Taeniopygia_guttata_lsi") %>%
+  nrow()
+outgroup_1 %>% filter(species == "Parus_major_lsi") %>%
+  nrow()
+##この三つのnrowの最大値が、その値はカラス特異的に進化したOG数。この場合、45OGs
+
+##All1も同様に
+All2 <- All1 %>% left_join(orthogroups, by = "Orthogroup")
+All3 <- All2 %>% pivot_longer(2:ncol(All2), names_to = "species", values_to = "refseq") %>%
+  na.omit()
+
+
+##結合前に、outgroup_1、All1中のrefseqのrefseq_peptide_predictedのお尻(XPaaaaaa.1→XPaaaaaa)を削る
+##まず、三列目を分解して分ける
+outgroup_syori <- outgroup_1 %>% 
+  separate(refseq, 
+           into = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20"), 
+           sep = ",")
+##すべての行でNAになるのが何列目からか、上を走らせて確認してから、NAの列を削除するのが良さそう
+
+##すべての列について、お尻削らせる
+outgroup_2 <- outgroup_syori %>% 
+  mutate(across(.cols = !c(Orthogroup, species),
+                .fns = str_replace, 
+                pattern = "\\.\\d",
+                replacement = ""))
+outgroup_3 <- outgroup_2 %>% 
+  pivot_longer(3:ncol(outgroup_2), names_to = "NUMBER", values_to = "refseq") %>%
+  na.omit() %>% 
+  dplyr::select(!NUMBER)
+
+##mutate(across)は、指定した列に対して一括で操作を行う。strをするときは、上のようにバラさないといけないっぽい
+##https://community.rstudio.com/t/across-and-stringr-together-with-mutate/93439
+
+
+##ref$speciesを三種それぞれに分解して、三種それぞれのrefseq情報を作成。
+Falb <- outgroup_1[outgroup_1$species == "Ficedula_albicollis_lsi",]
+Pmaj <- outgroup_1[outgroup_1$species == "Parus_major_lsi",]
+Tgut <- outgroup_1[outgroup_1$species == "Taeniopygia_guttata_lsi",]
+
+##refseq_peptide_predictedの後ろの.1とかを消去する
+Falb$refseq <- Falb$refseq %>% str_remove_all(pattern = "\\.\\d")
+Falb <- Falb$refseq %>% str_remove_all(pattern = "\\.\\d")
+
+Pmaj <- Pmaj$refseq %>% 
+  str_remove_all(pattern = "\\.\\d")
+
+
+Tgut <- Tgut$refseq %>% 
+  str_remove_all(pattern = "\\.\\d")
+
+##2.biomaRtで参照するデータの準備
+listMarts() ##どんなmartがあるのか調べる。
+db <- useMart("ENSEMBL_MART_ENSEMBL") ##使いたいbiomartを指定
+listDatasets(db) ##どんなデータがストックされているか調べる
+fa <- useDataset("falbicollis_gene_ensembl", mart = db) ##martはデータベースの名前
+pm <- useDataset("pmajor_gene_ensembl", mart = db)
+tg <- useDataset("tguttata_gene_ensembl", mart = db)
+
+##変換元の属性名を検索
+filters <- listFilters(fa) ##引数はfaなど
+filters[grep("seq", filters[,1]),] ##input(すなわち、REFSEQ)はNCBIから撮ってきたXP_xxxxxx(タンパク質のAA配列)
+##変換先は？遺伝子名をEnsembl outputに直したいのでensembl_peptide_id。元のrefseq_peptide(_predicted)も入れておこう。
+attributes <- listAttributes(fa)
+attributes[grep("go_id", attributes[,1]),] ##ensembl,go_id,seqで検索
+
+
+##3.それじゃあ変換しよう
+##念の為三種のアノテーション情報を用いる
+resFa <- getBM(attributes =c("refseq_peptide_predicted", "ensembl_gene_id", "go_id"),  #attributesに入れる値は、listAttributes()で調べたやつ
+             filters = "refseq_peptide_predicted", #filters に入れる値は、listFilters()で探したやつ
+             values = Falb, #valuesには、変換元のデータが入っている列を指定。
+             mart = fa)
+
+resPm <- getBM(attributes =c("refseq_peptide_predicted", "ensembl_gene_id", "go_id"),  #attributesに入れる値は、listAttributes()で調べたやつ
+               filters = "refseq_peptide_predicted", #filters に入れる値は、listFilters()で探したやつ
+               values = Pmaj, #valuesには、変換元のデータが入っている列を指定。
+               mart = pm)
+
+resTg <- getBM(attributes =c("refseq_peptide_predicted", "ensembl_gene_id", "go_id"),  #attributesに入れる値は、listAttributes()で調べたやつ
+               filters = "refseq_peptide_predicted", #filters に入れる値は、listFilters()で探したやつ
+               values = Tgut, #valuesには、変換元のデータが入っている列を指定。
+               mart = tg)
+##これで、遺伝子にGO termを紐付けできた。
+
+
+##4. 興味ある遺伝子テーブル(outgroup)と先ほど作った「gene-to-GOテーブル」を接続
+#ORref <- outgroup_1[order(outgroup_1$Orthogroup),]
+#ORref
+
+##まず、使用した三種のアノテーションデータを結合。
+resFaPm <- bind_rows(resFa, resPm)
+res <- bind_rows(resFaPm, resTg)
+#res_2 <- res[order(res$refseq_peptide_predicted),]
+
+
+
+##いよいよ結合
+class(outgroup_3$refseq)
+res$refseq_peptide_predicted <- res$refseq_peptide_predicted %>%
+  as.character()
+Kyoumiannotation <- full_join(outgroup_3, res, 
+                              by = c(refseq = "refseq_peptide_predicted")) %>%
+  na.omit() %>%
+  dplyr::select(Orthogroup, go_id)
+##joinするときは、二つのclassを揃えよう。
+
+All <- orthogroups %>% pivot_longer(2:ncol(orthogroups), names_to = "species", values_to = "refseq")
+
+##ファイルの書き出しも忘れずに
+#annotation %>% write.table("topGO/annotation/crows/ANNOTATION.txt",
+#                           quote = F, col.names = T)
+#annotation %>% write.table("topGO/annotation/crows/ANNOTATION.csv",
+#                           quote = F, col.names = T)
+
+
+##Step.2 Extract OGs and p-values
+Pti <- read_table("../cafe/output/0324result/Orthogroups.GeneCount0324.tsv.rep.cafe",
+                skip = 11, col_names = FALSE) %>%
+  dplyr::select(X1, X3) #%>%
+#  str_remove_all("OG")
+
+
+#Interests <- Pti %>% filter(X3 < 0.05)
+
+##Step.3 Let's enrichment analysis
+##まず、topGOデータの準備。
+##allGenesに噛ませるのはnumericかfactorなので、変換。setNames()で出来ればそれが良いのだが。
+
+Pti1 <- Pti %>% separate(X1, into = c("OG", "number"), sep = "OG") %>%
+  select(!OG)
+
+
+tPti1 <- Pti1[1] %>%
+  t() %>% as.numeric()
+tPti2 <- Pti1[2] %>%
+  t() %>% as.numeric()
+##Genesはnumericなので、okです。
+Genes <- setNames(tPti2, tPti1)
+
+BiocManager::install("BSgenome.Tguttata.UCSC.taeGut1")
+library("BSgenome.Tguttata.UCSC.taeGut1")
+library("org.Gg.eg.db")
+tg_mohou <- new("topGOdata",
+                ontology = "BP",
+                allGenes = Genes,
+                geneSelectionFun = function(x) {x < 0.01},
+                nodeSize = 5,
+                annotationFun = annFUN.org,
+                mapping = "org.Gg.eg.db",
+                ID = "entrez")
+
+
+tg_data = new("topGOdata",
+              ontology="BP",
+              allGenes=named_scores,
+              geneSelectionFun=function(x) {x < 0.01},
+              # geneSelectionFun=function(x) {abs(x) > 1},
+              nodeSize=10,
+              annotationFun=annFUN.org,
+              mapping="org.Hs.eg.db",
+              ID="entrez")
+
+library(org.Hs.eg.db)
+entrez_ids = mappedkeys(org.Hs.egGO)
+scores = runif(length(entrez_ids), 0, 1)  # p-value-like
+# scores = rnorm(length(entrez_ids), 0, 0.4)  # log2FC-like
+named_scores = setNames(scores, entrez_ids)

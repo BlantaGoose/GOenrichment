@@ -1,0 +1,11 @@
+GO:0006352, DNA-templated transcription initiation, The initial step of transcription, consisting of the assembly of the RNA polymerase preinitiation 
+complex (PIC) at a gene promoter, as well as the formation of the first few bonds of the RNA transcript. Transcription initiation includes abortive 
+initiation events, which occur when the first few nucleotides are repeatedly synthesized and then released, and ends when promoter 
+clearance takes place., BP>
+
+
+GO:0003677, DNA binding, Any molecular function by which a gene product interacts selectively and non-covalently with DNA 
+(deoxyribonucleic acid).
+
+GO:0046982, protein heterodimerization activity, Binding to a nonidentical protein to form a heterodimer., MF>binding>protein 
+binding>protein dimerization activity
